@@ -1,0 +1,161 @@
+createOrReplace
+
+	function SVG_Three_in_One = ```
+			(
+			        ColumnDim : anyref,       
+			        MeasureAC : numeric expr, 
+			        MeasurePL : numeric expr,
+			        ColorAC_In : string,    
+			        ColorPL_In : string,    
+			        ColorGood_In : string,  
+			        ColorBad_In : string    
+			    )
+			    => 
+			    VAR _AC = MeasureAC
+			    VAR _PL = MeasurePL
+			    
+			    -- 0. 颜色处理
+			    VAR _c_AC   = IF(ColorAC_In   = "", "#333333", ColorAC_In)
+			    VAR _c_PL   = IF(ColorPL_In   = "", "#E0E0E0", ColorPL_In)
+			    VAR _c_Good = IF(ColorGood_In = "", "#85B648", ColorGood_In)
+			    VAR _c_Bad  = IF(ColorBad_In  = "", "#D94749", ColorBad_In)
+			
+			    -- 1. 数值格式化
+			    VAR _Val_AC = ABS(_AC)
+			    VAR _Label_AC = 
+			        SWITCH(TRUE(),
+			            _Val_AC >= 100000000, FORMAT(_Val_AC / 100000000, "0.#") & "亿", 
+			            _Val_AC >= 10000,     FORMAT(_Val_AC / 10000, "0.0") & "万",
+			            _Val_AC >= 1000,      FORMAT(_Val_AC / 1000, "0.0") & "千",
+			            FORMAT(_Val_AC, "0")
+			        )
+			
+			    VAR _Diff = _AC - _PL
+			    VAR _Val_Diff = ABS(_Diff)
+			    VAR _Label_Diff = 
+			        SWITCH(TRUE(),
+			            _Val_Diff >= 100000000, FORMAT(_Val_Diff / 100000000, "0.#") & "亿",
+			            _Val_Diff >= 10000,     FORMAT(_Val_Diff / 10000, "0.0") & "万",
+			            _Val_Diff >= 1000,      FORMAT(_Val_Diff / 1000, "0.0") & "千",
+			            FORMAT(_Val_Diff, "0")
+			        )
+			
+			    VAR _DiffPct = DIVIDE(_Diff, _PL)
+			    VAR _Label_Pct = FORMAT(_DiffPct, "0%") 
+			
+			    -- 2. 自动计算比例尺 (平均值 * 3 作为软封顶)
+			    VAR _AvgAC = AVERAGEX(ALLSELECTED(ColumnDim), ABS(MeasureAC))
+			    VAR _TrueMaxAC = MAXX(ALLSELECTED(ColumnDim), MAX(MeasureAC, MeasurePL))
+			    VAR _Cap_Val = IF(_TrueMaxAC > _AvgAC * 3, _AvgAC * 3, _TrueMaxAC)
+			    
+			    VAR _AvgDiff = AVERAGEX(ALLSELECTED(ColumnDim), ABS(MeasureAC - MeasurePL))
+			    VAR _TrueMaxDiff = MAXX(ALLSELECTED(ColumnDim), ABS(MeasureAC - MeasurePL))
+			    VAR _Cap_Diff = IF(_TrueMaxDiff > _AvgDiff * 3, _AvgDiff * 3, _TrueMaxDiff)
+			    
+			    VAR _Limit_Abs = MAX(_Cap_Diff, _AvgAC * 0.1) 
+			    VAR _ScaleMax_Pct = 0.5 
+			
+			    VAR _ShouldDraw = NOT(ISBLANK(_AC) && ISBLANK(_PL)) && _Cap_Val > 0
+			
+			    -- ==========================================================
+			    -- 3. 绘图逻辑 (Canvas Width: 400)
+			    -- ==========================================================
+			    
+			    -- ----------------------------------------------------------
+			    -- 【Part A: 值 (0-135)】 高度 8
+			    -- ----------------------------------------------------------
+			    VAR _MaxBarW_Val = 95 
+			    VAR _RawRatio_AC = DIVIDE(_AC, _Cap_Val)
+			    VAR _RawRatio_PL = DIVIDE(_PL, _Cap_Val)
+			    VAR _PctAC_V = IF(_ShouldDraw, MIN(_RawRatio_AC, 1) * _MaxBarW_Val, 0)
+			    VAR _PctPL_V = IF(_ShouldDraw, MIN(_RawRatio_PL, 1) * _MaxBarW_Val, 0)
+			    
+			    VAR _IsTrunc_AC = _RawRatio_AC > 1
+			    VAR _IsTrunc_PL = _RawRatio_PL > 1
+			    
+			    -- 【中段截断符】
+			    -- 计算截断位置：在柱子当前长度的 50% 处
+			    VAR _BreakX_AC = _PctAC_V / 2
+			    VAR _BreakX_PL = _PctPL_V / 2
+			    
+			    -- 闪电路径：在中间画一道白色锯齿
+			    -- stroke-width='2' 确保锯齿足够粗，能把柱子"切断"
+			    VAR _ZigZag_AC = IF(_IsTrunc_AC, 
+			        "<path d='M" & (_BreakX_AC - 2) & " 8 L" & (_BreakX_AC + 2) & " 11 L" & (_BreakX_AC - 2) & " 13 L" & (_BreakX_AC + 2) & " 16' stroke='white' stroke-width='2' fill='none'/>", "")
+			    VAR _ZigZag_PL = IF(_IsTrunc_PL, 
+			        "<path d='M" & (_BreakX_PL - 2) & " 2 L" & (_BreakX_PL + 2) & " 5 L" & (_BreakX_PL - 2) & " 7 L" & (_BreakX_PL + 2) & " 10' stroke='white' stroke-width='2' fill='none'/>", "")
+			    
+			    VAR _TextX_AC = _PctAC_V + 3
+			    
+			    VAR _SVG_Value = 
+			        "<rect x='0' y='2' width='" & _PctPL_V & "' height='8' fill='" & _c_PL & "'/>" & _ZigZag_PL &
+			        "<rect x='0' y='8' width='" & _PctAC_V & "' height='8' fill='" & _c_AC & "'/>" & _ZigZag_AC &
+			        "<text x='" & _TextX_AC & "' y='15.5' font-size='9' font-family='Microsoft YaHei' fill='#333333'>" & _Label_AC & "</text>"
+			
+			    -- ----------------------------------------------------------
+			    -- 【Part B: 差值 (135-265)】 高度 10
+			    -- ----------------------------------------------------------
+			    VAR _MaxBarW_Diff = 25 
+			    VAR _RawRatio_Diff = DIVIDE(ABS(_Diff), _Limit_Abs)
+			    VAR _Width_Abs = MIN(_RawRatio_Diff, 1) * _MaxBarW_Diff
+			    VAR _IsTrunc_Diff = _RawRatio_Diff > 1
+			    
+			    VAR _Color_Abs = IF(_Diff >= 0, _c_Good, _c_Bad)
+			    VAR _X_Abs = 200 + IF(_Diff >= 0, 0, -_Width_Abs) 
+			    
+			    -- 【中段截断符】
+			    -- 正数：200 + 宽度的一半
+			    -- 负数：200 - 宽度的一半
+			    VAR _BreakX_Diff = IF(_Diff >= 0, 200 + (_Width_Abs / 2), 200 - (_Width_Abs / 2))
+			    
+			    VAR _ZigZag_Diff = IF(_IsTrunc_Diff, 
+			        "<path d='M" & (_BreakX_Diff - 2) & " 6 L" & (_BreakX_Diff + 2) & " 9 L" & (_BreakX_Diff - 2) & " 13 L" & (_BreakX_Diff + 2) & " 16' stroke='white' stroke-width='2' fill='none'/>", "")
+			    
+			    VAR _TextX_Diff = IF(_Diff >= 0, 200 + _Width_Abs + 3, 200 - _Width_Abs - 3)
+			    VAR _Anchor_Diff = IF(_Diff >= 0, "start", "end")
+			    
+			    VAR _SVG_Variance = 
+			        "<line x1='200' y1='0' x2='200' y2='24' stroke='#D3D3D3' stroke-width='1'/>" & 
+			        "<rect x='" & _X_Abs & "' y='6' width='" & _Width_Abs & "' height='10' fill='" & _Color_Abs & "'/>" & _ZigZag_Diff &
+			        "<text x='" & _TextX_Diff & "' y='15.5' text-anchor='" & _Anchor_Diff & "' font-size='9' font-family='Microsoft YaHei' fill='#555555'>" & _Label_Diff & "</text>"
+			
+			    -- ----------------------------------------------------------
+			    -- 【Part C: 比率 (265-400)】
+			    -- ----------------------------------------------------------
+			    VAR _MaxBarW_Pct = 30 
+			    VAR _RawRatio_Pct = DIVIDE(ABS(_DiffPct), _ScaleMax_Pct)
+			    VAR _Width_Pct = MIN(_RawRatio_Pct, 1) * _MaxBarW_Pct
+			    VAR _IsTrunc_Pct = _RawRatio_Pct > 1
+			    
+			    VAR _Color_Pct = IF(_DiffPct >= 0, _c_Good, _c_Bad)
+			    VAR _X_Line_Pct = 332 + IF(_DiffPct >= 0, 0, -_Width_Pct) 
+			    VAR _CX_Circle = 332 + IF(_DiffPct >= 0, _Width_Pct, -_Width_Pct)
+			    
+			    VAR _CircleFill = IF(_IsTrunc_Pct, "white", _Color_Pct)
+			    VAR _CircleStroke = IF(_IsTrunc_Pct, "stroke='" & _Color_Pct & "' stroke-width='1.5'", "")
+			    
+			    VAR _TextX_Pct = IF(_DiffPct >= 0, 332 + _Width_Pct + 6, 332 - _Width_Pct - 6) 
+			    VAR _Anchor_Pct = IF(_DiffPct >= 0, "start", "end")
+			
+			    VAR _SVG_Ratio = 
+			        "<line x1='332' y1='0' x2='332' y2='24' stroke='#D3D3D3' stroke-width='1'/>" &
+			        "<rect x='" & _X_Line_Pct & "' y='10' width='" & _Width_Pct & "' height='2' fill='" & _Color_Pct & "'/>" &
+			        "<circle cx='" & _CX_Circle & "' cy='11' r='3' fill='" & _CircleFill & "' " & _CircleStroke & "/>" &
+			        "<text x='" & _TextX_Pct & "' y='15.5' text-anchor='" & _Anchor_Pct & "' font-size='9' font-family='Microsoft YaHei' fill='#555555'>" & _Label_Pct & "</text>"
+			
+			    RETURN
+			        IF(_ShouldDraw,
+			            "data:image/svg+xml;utf8," & 
+			            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 24' preserveAspectRatio='none'>" &
+			            
+			            -- 分割线
+			            "<line x1='135' y1='0' x2='135' y2='24' stroke='#E0E0E0' stroke-width='1'/>" &
+			            "<line x1='265' y1='0' x2='265' y2='24' stroke='#E0E0E0' stroke-width='1'/>" &
+			            
+			            _SVG_Value & _SVG_Variance & _SVG_Ratio &
+			            "</svg>",
+			            BLANK()
+			        )
+			```
+		lineageTag: 110ba2ce-eea6-478d-beea-3add03040793
+
